@@ -21,6 +21,7 @@ if(UBPF_ENABLE_TESTS)
 endif()
 
 add_subdirectory("vm")
+add_subdirectory(demos)
 
 if(NOT UBPF_SKIP_EXTERNAL)
   ExternalProject_Add(Conformance
