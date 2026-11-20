@@ -82,6 +82,32 @@ is_simd_opcode(uint8_t opcode)
     case EBPF_OP_VINSERT64_REG:
     case EBPF_OP_VREDUCE_ADD32:
     case EBPF_OP_VREDUCE_ADD64:
+    case EBPF_OP_VAND:
+    case EBPF_OP_VAND32_IMM:
+    case EBPF_OP_VAND64_IMM:
+    case EBPF_OP_VOR:
+    case EBPF_OP_VOR32_IMM:
+    case EBPF_OP_VOR64_IMM:
+    case EBPF_OP_VXOR:
+    case EBPF_OP_VXOR32_IMM:
+    case EBPF_OP_VXOR64_IMM:
+    case EBPF_OP_VNOT:
+    case EBPF_OP_VLSH32_IMM:
+    case EBPF_OP_VLSH32_REG:
+    case EBPF_OP_VLSH64_IMM:
+    case EBPF_OP_VLSH64_REG:
+    case EBPF_OP_VRSH32_IMM:
+    case EBPF_OP_VRSH32_REG:
+    case EBPF_OP_VRSH64_IMM:
+    case EBPF_OP_VRSH64_REG:
+    case EBPF_OP_VARSH32_IMM:
+    case EBPF_OP_VARSH32_REG:
+    case EBPF_OP_VARSH64_IMM:
+    case EBPF_OP_VARSH64_REG:
+    case EBPF_OP_VTOBE32:
+    case EBPF_OP_VTOBE64:
+    case EBPF_OP_VTOLE32:
+    case EBPF_OP_VTOLE64:
         return true;
     default:
         return false;
@@ -1089,6 +1115,84 @@ ubpf_exec_ex(
                 break;
             case EBPF_OP_VREDUCE_ADD64:
                 reg[inst.dst] = ubpf_simd_reduce_add64(vreg[inst.src]);
+                break;
+            case EBPF_OP_VAND:
+                ubpf_simd_and_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VAND32_IMM:
+                ubpf_simd_and32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VAND64_IMM:
+                ubpf_simd_and64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VOR:
+                ubpf_simd_or_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VOR32_IMM:
+                ubpf_simd_or32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VOR64_IMM:
+                ubpf_simd_or64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VXOR:
+                ubpf_simd_xor_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VXOR32_IMM:
+                ubpf_simd_xor32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VXOR64_IMM:
+                ubpf_simd_xor64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VNOT:
+                ubpf_simd_not(vreg[inst.dst]);
+                break;
+            case EBPF_OP_VLSH32_IMM:
+                ubpf_simd_lsh32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VLSH32_REG:
+                ubpf_simd_lsh32_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VLSH64_IMM:
+                ubpf_simd_lsh64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VLSH64_REG:
+                ubpf_simd_lsh64_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VRSH32_IMM:
+                ubpf_simd_rsh32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VRSH32_REG:
+                ubpf_simd_rsh32_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VRSH64_IMM:
+                ubpf_simd_rsh64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VRSH64_REG:
+                ubpf_simd_rsh64_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VARSH32_IMM:
+                ubpf_simd_arsh32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VARSH32_REG:
+                ubpf_simd_arsh32_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VARSH64_IMM:
+                ubpf_simd_arsh64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VARSH64_REG:
+                ubpf_simd_arsh64_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VTOBE32:
+                ubpf_simd_to_be32(vreg[inst.dst]);
+                break;
+            case EBPF_OP_VTOBE64:
+                ubpf_simd_to_be64(vreg[inst.dst]);
+                break;
+            case EBPF_OP_VTOLE32:
+                ubpf_simd_to_le32(vreg[inst.dst]);
+                break;
+            case EBPF_OP_VTOLE64:
+                ubpf_simd_to_le64(vreg[inst.dst]);
                 break;
             case EBPF_OP_VLD:
             case EBPF_OP_VST: {

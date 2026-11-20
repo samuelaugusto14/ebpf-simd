@@ -257,3 +257,199 @@ ubpf_simd_reduce_add64(const void* src)
     sum = _mm_add_epi64(sum, _mm_srli_si128(sum, 8));
     return (uint64_t)_mm_cvtsi128_si64(sum);
 }
+
+void
+ubpf_simd_and_reg(void* dst, const void* src)
+{
+    store_vector(dst, _mm256_and_si256(load_vector(dst), load_vector(src)));
+}
+
+void
+ubpf_simd_and32_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_and_si256(load_vector(dst), _mm256_set1_epi32(imm)));
+}
+
+void
+ubpf_simd_and64_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_and_si256(load_vector(dst), _mm256_set1_epi64x((int64_t)imm)));
+}
+
+void
+ubpf_simd_or_reg(void* dst, const void* src)
+{
+    store_vector(dst, _mm256_or_si256(load_vector(dst), load_vector(src)));
+}
+
+void
+ubpf_simd_or32_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_or_si256(load_vector(dst), _mm256_set1_epi32(imm)));
+}
+
+void
+ubpf_simd_or64_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_or_si256(load_vector(dst), _mm256_set1_epi64x((int64_t)imm)));
+}
+
+void
+ubpf_simd_xor_reg(void* dst, const void* src)
+{
+    store_vector(dst, _mm256_xor_si256(load_vector(dst), load_vector(src)));
+}
+
+void
+ubpf_simd_xor32_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_xor_si256(load_vector(dst), _mm256_set1_epi32(imm)));
+}
+
+void
+ubpf_simd_xor64_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_xor_si256(load_vector(dst), _mm256_set1_epi64x((int64_t)imm)));
+}
+
+void
+ubpf_simd_not(void* dst)
+{
+    store_vector(dst, _mm256_xor_si256(load_vector(dst), _mm256_set1_epi32(-1)));
+}
+
+enum
+{
+    SHIFT32_MASK = 31,
+    SHIFT64_MASK = 63,
+};
+
+/* The SIMD ISA reduces each count modulo the lane width before shifting. */
+static __m128i
+shift_count(int32_t imm, uint32_t mask)
+{
+    return _mm_cvtsi32_si128((uint32_t)imm & mask);
+}
+
+static __m256i
+shift_counts32(const void* src)
+{
+    return _mm256_and_si256(load_vector(src), _mm256_set1_epi32(SHIFT32_MASK));
+}
+
+static __m256i
+shift_counts64(const void* src)
+{
+    return _mm256_and_si256(load_vector(src), _mm256_set1_epi64x(SHIFT64_MASK));
+}
+
+void
+ubpf_simd_lsh32_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_sll_epi32(load_vector(dst), shift_count(imm, SHIFT32_MASK)));
+}
+
+void
+ubpf_simd_lsh32_reg(void* dst, const void* src)
+{
+    store_vector(dst, _mm256_sllv_epi32(load_vector(dst), shift_counts32(src)));
+}
+
+void
+ubpf_simd_lsh64_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_sll_epi64(load_vector(dst), shift_count(imm, SHIFT64_MASK)));
+}
+
+void
+ubpf_simd_lsh64_reg(void* dst, const void* src)
+{
+    store_vector(dst, _mm256_sllv_epi64(load_vector(dst), shift_counts64(src)));
+}
+
+void
+ubpf_simd_rsh32_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_srl_epi32(load_vector(dst), shift_count(imm, SHIFT32_MASK)));
+}
+
+void
+ubpf_simd_rsh32_reg(void* dst, const void* src)
+{
+    store_vector(dst, _mm256_srlv_epi32(load_vector(dst), shift_counts32(src)));
+}
+
+void
+ubpf_simd_rsh64_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_srl_epi64(load_vector(dst), shift_count(imm, SHIFT64_MASK)));
+}
+
+void
+ubpf_simd_rsh64_reg(void* dst, const void* src)
+{
+    store_vector(dst, _mm256_srlv_epi64(load_vector(dst), shift_counts64(src)));
+}
+
+void
+ubpf_simd_arsh32_imm(void* dst, int32_t imm)
+{
+    store_vector(dst, _mm256_sra_epi32(load_vector(dst), shift_count(imm, SHIFT32_MASK)));
+}
+
+void
+ubpf_simd_arsh32_reg(void* dst, const void* src)
+{
+    store_vector(dst, _mm256_srav_epi32(load_vector(dst), shift_counts32(src)));
+}
+
+void
+ubpf_simd_arsh64_imm(void* dst, int32_t imm)
+{
+    __m256i value = load_vector(dst);
+    __m256i sign = _mm256_cmpgt_epi64(_mm256_setzero_si256(), value);
+    // Complement negative lanes before the logical shift and again afterward.
+    __m256i shifted = _mm256_srl_epi64(_mm256_xor_si256(value, sign), shift_count(imm, SHIFT64_MASK));
+    store_vector(dst, _mm256_xor_si256(shifted, sign));
+}
+
+void
+ubpf_simd_arsh64_reg(void* dst, const void* src)
+{
+    __m256i value = load_vector(dst);
+    __m256i sign = _mm256_cmpgt_epi64(_mm256_setzero_si256(), value);
+    __m256i shifted = _mm256_srlv_epi64(_mm256_xor_si256(value, sign), shift_counts64(src));
+    store_vector(dst, _mm256_xor_si256(shifted, sign));
+}
+
+void
+ubpf_simd_to_be32(void* dst)
+{
+    // VPSHUFB selects bytes independently within each 128-bit half.
+    __m256i order = _mm256_setr_epi8(
+        3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12,
+        3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12);
+    store_vector(dst, _mm256_shuffle_epi8(load_vector(dst), order));
+}
+
+void
+ubpf_simd_to_be64(void* dst)
+{
+    __m256i order = _mm256_setr_epi8(
+        7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8,
+        7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
+    store_vector(dst, _mm256_shuffle_epi8(load_vector(dst), order));
+}
+
+/* The x86-64 AVX2 backend already stores lanes in little-endian order. */
+void
+ubpf_simd_to_le32(void* dst)
+{
+    UNUSED_PARAMETER(dst);
+}
+
+void
+ubpf_simd_to_le64(void* dst)
+{
+    UNUSED_PARAMETER(dst);
+}

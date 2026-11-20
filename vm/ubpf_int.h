@@ -224,6 +224,84 @@ ubpf_simd_reduce_add32(const void* src);
 uint64_t
 ubpf_simd_reduce_add64(const void* src);
 
+void
+ubpf_simd_and_reg(void* dst, const void* src);
+
+void
+ubpf_simd_and32_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_and64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_or_reg(void* dst, const void* src);
+
+void
+ubpf_simd_or32_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_or64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_xor_reg(void* dst, const void* src);
+
+void
+ubpf_simd_xor32_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_xor64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_not(void* dst);
+
+void
+ubpf_simd_lsh32_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_lsh32_reg(void* dst, const void* src);
+
+void
+ubpf_simd_lsh64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_lsh64_reg(void* dst, const void* src);
+
+void
+ubpf_simd_rsh32_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_rsh32_reg(void* dst, const void* src);
+
+void
+ubpf_simd_rsh64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_rsh64_reg(void* dst, const void* src);
+
+void
+ubpf_simd_arsh32_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_arsh32_reg(void* dst, const void* src);
+
+void
+ubpf_simd_arsh64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_arsh64_reg(void* dst, const void* src);
+
+void
+ubpf_simd_to_be32(void* dst);
+
+void
+ubpf_simd_to_be64(void* dst);
+
+void
+ubpf_simd_to_le32(void* dst);
+
+void
+ubpf_simd_to_le64(void* dst);
+
 /* The various JIT targets.  */
 
 // arm64

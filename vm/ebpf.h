@@ -107,6 +107,35 @@ enum bpf_vector_register
 #define EBPF_OP_VREDUCE_ADD32 0xe0
 #define EBPF_OP_VREDUCE_ADD64 0xf0
 
+#define EBPF_OP_VAND 0x0b
+#define EBPF_OP_VAND32_IMM 0x03
+#define EBPF_OP_VAND64_IMM 0x13
+#define EBPF_OP_VOR 0x2b
+#define EBPF_OP_VOR32_IMM 0x23
+#define EBPF_OP_VOR64_IMM 0x33
+#define EBPF_OP_VXOR 0x4b
+#define EBPF_OP_VXOR32_IMM 0x43
+#define EBPF_OP_VXOR64_IMM 0x53
+#define EBPF_OP_VNOT 0x5b
+
+#define EBPF_OP_VLSH32_IMM 0xa2
+#define EBPF_OP_VLSH32_REG 0xaa
+#define EBPF_OP_VLSH64_IMM 0xb2
+#define EBPF_OP_VLSH64_REG 0xba
+#define EBPF_OP_VRSH32_IMM 0xc2
+#define EBPF_OP_VRSH32_REG 0xca
+#define EBPF_OP_VRSH64_IMM 0xd2
+#define EBPF_OP_VRSH64_REG 0xda
+#define EBPF_OP_VARSH32_IMM 0xe2
+#define EBPF_OP_VARSH32_REG 0xea
+#define EBPF_OP_VARSH64_IMM 0xf2
+#define EBPF_OP_VARSH64_REG 0xfa
+
+#define EBPF_OP_VTOBE32 0xa0
+#define EBPF_OP_VTOBE64 0xb0
+#define EBPF_OP_VTOLE32 0xa8
+#define EBPF_OP_VTOLE64 0xb8
+
 #define EBPF_SIMD_VECTOR_BYTES 32
 #define EBPF_SIMD_LANES32 (EBPF_SIMD_VECTOR_BYTES / sizeof(uint32_t))
 #define EBPF_SIMD_LANES64 (EBPF_SIMD_VECTOR_BYTES / sizeof(uint64_t))
