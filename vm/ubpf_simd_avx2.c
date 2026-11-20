@@ -525,19 +525,29 @@ ubpf_simd_cmp_gt64_reg(void* mask, const void* lhs, const void* rhs, bool is_sig
     store_vector(mask, compare_gt64(load_vector(lhs), load_vector(rhs), is_signed));
 }
 
+static __m256i
+mask_bytes32(__m256i mask)
+{
+    // VPBLENDVB selects by byte. Expand each lane's sign bit to all of its bytes.
+    return _mm256_srai_epi32(mask, SHIFT32_MASK);
+}
+
+static __m256i
+mask_bytes64(__m256i mask)
+{
+    return _mm256_cmpgt_epi64(_mm256_setzero_si256(), mask);
+}
+
 void
 ubpf_simd_move_masked32(void* dst, const void* src, const void* mask)
 {
-    // VPBLENDVB selects by byte. Expand each lane's sign bit to all of its bytes.
-    __m256i active_lanes = _mm256_srai_epi32(load_vector(mask), SHIFT32_MASK);
-    store_vector(dst, _mm256_blendv_epi8(load_vector(dst), load_vector(src), active_lanes));
+    store_vector(dst, _mm256_blendv_epi8(load_vector(dst), load_vector(src), mask_bytes32(load_vector(mask))));
 }
 
 void
 ubpf_simd_move_masked64(void* dst, const void* src, const void* mask)
 {
-    __m256i active_lanes = _mm256_cmpgt_epi64(_mm256_setzero_si256(), load_vector(mask));
-    store_vector(dst, _mm256_blendv_epi8(load_vector(dst), load_vector(src), active_lanes));
+    store_vector(dst, _mm256_blendv_epi8(load_vector(dst), load_vector(src), mask_bytes64(load_vector(mask))));
 }
 
 uint32_t
@@ -550,4 +560,54 @@ uint32_t
 ubpf_simd_mask_bits64(const void* mask)
 {
     return (uint32_t)_mm256_movemask_pd(_mm256_castsi256_pd(load_vector(mask)));
+}
+
+static bool
+can_use_masked_intrinsics(void* const* addresses, uint32_t active, size_t lane_size)
+{
+    // Active lane zero supplies a validated base aligned for the intrinsic's pointer type.
+    return (active & 1) && (uintptr_t)addresses[0] % lane_size == 0;
+}
+
+void
+ubpf_simd_load_masked_contiguous(
+    void* dst, void* const* addresses, const void* mask, uint32_t active, size_t lane_size)
+{
+    if (can_use_masked_intrinsics(addresses, active, lane_size)) {
+        __m256i raw_mask = load_vector(mask);
+        bool lanes32 = lane_size == sizeof(uint32_t);
+        __m256i byte_mask = lanes32 ? mask_bytes32(raw_mask) : mask_bytes64(raw_mask);
+        __m256i value = lanes32 ? _mm256_maskload_epi32((const int*)addresses[0], byte_mask)
+                                : _mm256_maskload_epi64((const long long*)addresses[0], byte_mask);
+        store_vector(dst, _mm256_blendv_epi8(load_vector(dst), value, byte_mask));
+        return;
+    }
+
+    for (size_t lane = 0; lane < EBPF_SIMD_VECTOR_BYTES / lane_size; lane++) {
+        if (active & (UINT32_C(1) << lane)) {
+            memcpy((uint8_t*)dst + lane * lane_size, addresses[lane], lane_size);
+        }
+    }
+}
+
+void
+ubpf_simd_store_masked_contiguous(
+    void* const* addresses, const void* src, const void* mask, uint32_t active, size_t lane_size)
+{
+    if (can_use_masked_intrinsics(addresses, active, lane_size)) {
+        __m256i raw_mask = load_vector(mask);
+        __m256i value = load_vector(src);
+        if (lane_size == sizeof(uint32_t)) {
+            _mm256_maskstore_epi32((int*)addresses[0], raw_mask, value);
+        } else {
+            _mm256_maskstore_epi64((long long*)addresses[0], raw_mask, value);
+        }
+        return;
+    }
+
+    for (size_t lane = 0; lane < EBPF_SIMD_VECTOR_BYTES / lane_size; lane++) {
+        if (active & (UINT32_C(1) << lane)) {
+            memcpy(addresses[lane], (const uint8_t*)src + lane * lane_size, lane_size);
+        }
+    }
 }

@@ -120,6 +120,10 @@ is_simd_opcode(uint8_t opcode)
     case EBPF_OP_VMOVM64:
     case EBPF_OP_VMOVMSK32:
     case EBPF_OP_VMOVMSK64:
+    case EBPF_OP_VLDM32:
+    case EBPF_OP_VLDM64:
+    case EBPF_OP_VSTM32:
+    case EBPF_OP_VSTM64:
         return true;
     default:
         return false;
@@ -746,6 +750,12 @@ ubpf_validate_shadow_register(const struct ubpf_vm* vm, uint32_t pc, uint16_t* s
         case EBPF_OP_VMOVMSK64:
             *shadow_registers |= REGISTER_TO_SHADOW_MASK(inst.dst);
             break;
+        case EBPF_OP_VLDM32:
+        case EBPF_OP_VLDM64:
+        case EBPF_OP_VSTM32:
+        case EBPF_OP_VSTM64:
+            // Masked memory checks its scalar base after determining the active lanes.
+            break;
         default:
             // Remaining SIMD instructions use the zero-initialized vector bank and immediates.
             break;
@@ -907,7 +917,7 @@ ubpf_validate_shadow_register(const struct ubpf_vm* vm, uint32_t pc, uint16_t* s
 
 static bool
 compute_effective_address(
-    const struct ubpf_vm* vm, uint64_t base, int16_t offset, const char* type, uint16_t pc, uint64_t* address)
+    const struct ubpf_vm* vm, uint64_t base, int32_t offset, const char* type, uint16_t pc, uint64_t* address)
 {
     if (offset >= 0) {
         if (base > UINT64_MAX - (uint64_t)offset) {
@@ -1248,6 +1258,64 @@ ubpf_exec_ex(
             case EBPF_OP_VMOVMSK64:
                 reg[inst.dst] = ubpf_simd_mask_bits64(vreg[BPF_VREG_MASK]);
                 break;
+            case EBPF_OP_VLDM32:
+            case EBPF_OP_VLDM64:
+            case EBPF_OP_VSTM32:
+            case EBPF_OP_VSTM64: {
+                bool load = inst.opcode == EBPF_OP_VLDM32 || inst.opcode == EBPF_OP_VLDM64;
+                bool lanes32 = inst.opcode == EBPF_OP_VLDM32 || inst.opcode == EBPF_OP_VSTM32;
+                const void* mask = vreg[BPF_VREG_MASK];
+                uint32_t active = lanes32 ? ubpf_simd_mask_bits32(mask) : ubpf_simd_mask_bits64(mask);
+                if (active == 0) {
+                    break;
+                }
+
+                const char* type = load ? "SIMD masked load" : "SIMD masked store";
+                unsigned int base = load ? inst.src : inst.dst;
+                if (vm->undefined_behavior_check_enabled && !(shadow_registers & REGISTER_TO_SHADOW_MASK(base))) {
+                    vm->error_printf(stderr, "uBPF error: %s base r%u is not initialized at PC %u\n", type, base, cur_pc);
+                    goto cleanup;
+                }
+                if (!vm->bounds_check_enabled) {
+                    vm->error_printf(stderr, "uBPF error: %s requires bounds checking at PC %u\n", type, cur_pc);
+                    goto cleanup;
+                }
+
+                size_t lane_size = lanes32 ? sizeof(uint32_t) : sizeof(uint64_t);
+                size_t lane_count = EBPF_SIMD_VECTOR_BYTES / lane_size;
+                void* addresses[EBPF_SIMD_LANES32] = {0};
+                for (size_t lane = 0; lane < lane_count; lane++) {
+                    if (!(active & (UINT32_C(1) << lane))) {
+                        continue;
+                    }
+                    int32_t lane_offset = (int32_t)inst.offset + (int32_t)(lane * lane_size);
+                    uint64_t address;
+                    if (!compute_effective_address(vm, reg[base], lane_offset, type, cur_pc, &address)) {
+                        goto cleanup;
+                    }
+                    void* ptr = (void*)(uintptr_t)address;
+                    if (!bounds_check(vm, ptr, (int)lane_size, type, cur_pc, mem, mem_len, stack_start, stack_length)) {
+                        goto cleanup;
+                    }
+                    if (load && !ubpf_check_shadow_stack(vm, stack_start, stack_length, shadow_stack, ptr, lane_size)) {
+                        vm->error_printf(stderr, "uBPF error: %s from uninitialized stack at PC %u\n", type, cur_pc);
+                        goto cleanup;
+                    }
+                    addresses[lane] = ptr;
+                }
+
+                if (load) {
+                    ubpf_simd_load_masked_contiguous(vreg[inst.dst], addresses, mask, active, lane_size);
+                } else {
+                    ubpf_simd_store_masked_contiguous(addresses, vreg[inst.src], mask, active, lane_size);
+                    for (size_t lane = 0; lane < lane_count; lane++) {
+                        if (active & (UINT32_C(1) << lane)) {
+                            ubpf_mark_shadow_stack(vm, stack_start, stack_length, shadow_stack, addresses[lane], lane_size);
+                        }
+                    }
+                }
+                break;
+            }
             case EBPF_OP_VLD:
             case EBPF_OP_VST: {
                 bool load = inst.opcode == EBPF_OP_VLD;

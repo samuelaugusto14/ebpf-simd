@@ -338,6 +338,15 @@ ubpf_simd_mask_bits32(const void* mask);
 uint32_t
 ubpf_simd_mask_bits64(const void* mask);
 
+/* Addresses are validated by the VM for each active lane. */
+void
+ubpf_simd_load_masked_contiguous(
+    void* dst, void* const* addresses, const void* mask, uint32_t active, size_t lane_size);
+
+void
+ubpf_simd_store_masked_contiguous(
+    void* const* addresses, const void* src, const void* mask, uint32_t active, size_t lane_size);
+
 /* The various JIT targets.  */
 
 // arm64
