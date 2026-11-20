@@ -36,7 +36,6 @@
 #define SHIFT_MASK_32_BIT(X) ((X) & 0x1f)
 #define SHIFT_MASK_64_BIT(X) ((X) & 0x3f)
 #define DEFAULT_JITTER_BUFFER_SIZE 65536
-#define SIMD_REGISTER_BYTES 32
 
 static bool
 validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_insts, bool* has_simd, char** errmsg);
@@ -55,7 +54,38 @@ bounds_check(
 static bool
 is_simd_opcode(uint8_t opcode)
 {
-    return opcode == EBPF_OP_VLD || opcode == EBPF_OP_VADD32_IMM || opcode == EBPF_OP_VST;
+    switch (opcode) {
+    case EBPF_OP_VLD:
+    case EBPF_OP_VST:
+    case EBPF_OP_VADD32_IMM:
+    case EBPF_OP_VADD32_REG:
+    case EBPF_OP_VADD64_IMM:
+    case EBPF_OP_VADD64_REG:
+    case EBPF_OP_VSUB32_IMM:
+    case EBPF_OP_VSUB32_REG:
+    case EBPF_OP_VSUB64_IMM:
+    case EBPF_OP_VSUB64_REG:
+    case EBPF_OP_VMUL32_IMM:
+    case EBPF_OP_VMUL32_REG:
+    case EBPF_OP_VMUL64_IMM:
+    case EBPF_OP_VMUL64_REG:
+    case EBPF_OP_VMOV:
+    case EBPF_OP_VMOV32_IMM:
+    case EBPF_OP_VMOV32_REG:
+    case EBPF_OP_VMOV64_IMM:
+    case EBPF_OP_VMOV64_REG:
+    case EBPF_OP_VEXTRACT32:
+    case EBPF_OP_VEXTRACT64:
+    case EBPF_OP_VINSERT32_IMM:
+    case EBPF_OP_VINSERT32_REG:
+    case EBPF_OP_VINSERT64_IMM:
+    case EBPF_OP_VINSERT64_REG:
+    case EBPF_OP_VREDUCE_ADD32:
+    case EBPF_OP_VREDUCE_ADD64:
+        return true;
+    default:
+        return false;
+    }
 }
 
 static bool
@@ -650,14 +680,35 @@ ubpf_validate_shadow_register(const struct ubpf_vm* vm, uint32_t pc, uint16_t* s
         return true;
     }
 
-    if (inst.opcode == EBPF_OP_VADD32_IMM) {
-        return true; // This instruction only reads the zero-initialized vector bank.
-    }
-    if (inst.opcode == EBPF_OP_VLD || inst.opcode == EBPF_OP_VST) {
-        unsigned int base = inst.opcode == EBPF_OP_VLD ? inst.src : inst.dst;
-        if ((*shadow_registers & REGISTER_TO_SHADOW_MASK(base)) == 0) {
-            vm->error_printf(stderr, "Error: %u: SIMD address base r%u is not initialized.\n", pc, base);
-            return false;
+    if (vm->has_simd && is_simd_opcode(inst.opcode)) {
+        switch (inst.opcode) {
+        case EBPF_OP_VLD:
+        case EBPF_OP_VST: {
+            unsigned int base = inst.opcode == EBPF_OP_VLD ? inst.src : inst.dst;
+            if ((*shadow_registers & REGISTER_TO_SHADOW_MASK(base)) == 0) {
+                vm->error_printf(stderr, "Error: %u: SIMD address base r%u is not initialized.\n", pc, base);
+                return false;
+            }
+            break;
+        }
+        case EBPF_OP_VMOV32_REG:
+        case EBPF_OP_VMOV64_REG:
+        case EBPF_OP_VINSERT32_REG:
+        case EBPF_OP_VINSERT64_REG:
+            if ((*shadow_registers & REGISTER_TO_SHADOW_MASK(inst.src)) == 0) {
+                vm->error_printf(stderr, "Error: %u: SIMD scalar source r%u is not initialized.\n", pc, inst.src);
+                return false;
+            }
+            break;
+        case EBPF_OP_VEXTRACT32:
+        case EBPF_OP_VEXTRACT64:
+        case EBPF_OP_VREDUCE_ADD32:
+        case EBPF_OP_VREDUCE_ADD64:
+            *shadow_registers |= REGISTER_TO_SHADOW_MASK(inst.dst);
+            break;
+        default:
+            // Remaining SIMD instructions use the zero-initialized vector bank and immediates.
+            break;
         }
         return true;
     }
@@ -853,7 +904,7 @@ ubpf_exec_ex(
     uint64_t* reg;
     uint64_t _reg[16]; // 16 for API compatibility with ubpf_debug_fn
 #ifdef UBPF_HAS_AVX2_BACKEND
-    uint8_t vreg[_BPF_VREG_MAX][SIMD_REGISTER_BYTES];
+    uint8_t vreg[_BPF_VREG_MAX][EBPF_SIMD_VECTOR_BYTES];
 #endif
     uint64_t stack_frame_index = 0;
     int return_value = -1;
@@ -967,6 +1018,78 @@ ubpf_exec_ex(
             case EBPF_OP_VADD32_IMM:
                 ubpf_simd_add32_imm(vreg[inst.dst], inst.imm);
                 break;
+            case EBPF_OP_VADD32_REG:
+                ubpf_simd_add32_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VADD64_IMM:
+                ubpf_simd_add64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VADD64_REG:
+                ubpf_simd_add64_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VSUB32_IMM:
+                ubpf_simd_sub32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VSUB32_REG:
+                ubpf_simd_sub32_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VSUB64_IMM:
+                ubpf_simd_sub64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VSUB64_REG:
+                ubpf_simd_sub64_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VMUL32_IMM:
+                ubpf_simd_mul32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VMUL32_REG:
+                ubpf_simd_mul32_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VMUL64_IMM:
+                ubpf_simd_mul64_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VMUL64_REG:
+                ubpf_simd_mul64_reg(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VMOV:
+                ubpf_simd_copy_vector(vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VMOV32_IMM:
+                ubpf_simd_broadcast32(vreg[inst.dst], (uint32_t)inst.imm);
+                break;
+            case EBPF_OP_VMOV32_REG:
+                ubpf_simd_broadcast32(vreg[inst.dst], (uint32_t)reg[inst.src]);
+                break;
+            case EBPF_OP_VMOV64_IMM:
+                ubpf_simd_broadcast64(vreg[inst.dst], (uint64_t)(int64_t)inst.imm);
+                break;
+            case EBPF_OP_VMOV64_REG:
+                ubpf_simd_broadcast64(vreg[inst.dst], reg[inst.src]);
+                break;
+            case EBPF_OP_VEXTRACT32:
+                reg[inst.dst] = ubpf_simd_extract32(vreg[inst.src], (unsigned int)inst.imm);
+                break;
+            case EBPF_OP_VEXTRACT64:
+                reg[inst.dst] = ubpf_simd_extract64(vreg[inst.src], (unsigned int)inst.imm);
+                break;
+            case EBPF_OP_VINSERT32_IMM:
+                ubpf_simd_insert32(vreg[inst.dst], (unsigned int)inst.offset, (uint32_t)inst.imm);
+                break;
+            case EBPF_OP_VINSERT32_REG:
+                ubpf_simd_insert32(vreg[inst.dst], (unsigned int)inst.offset, (uint32_t)reg[inst.src]);
+                break;
+            case EBPF_OP_VINSERT64_IMM:
+                ubpf_simd_insert64(vreg[inst.dst], (unsigned int)inst.offset, (uint64_t)(int64_t)inst.imm);
+                break;
+            case EBPF_OP_VINSERT64_REG:
+                ubpf_simd_insert64(vreg[inst.dst], (unsigned int)inst.offset, reg[inst.src]);
+                break;
+            case EBPF_OP_VREDUCE_ADD32:
+                reg[inst.dst] = ubpf_simd_reduce_add32(vreg[inst.src]);
+                break;
+            case EBPF_OP_VREDUCE_ADD64:
+                reg[inst.dst] = ubpf_simd_reduce_add64(vreg[inst.src]);
+                break;
             case EBPF_OP_VLD:
             case EBPF_OP_VST: {
                 bool load = inst.opcode == EBPF_OP_VLD;
@@ -982,19 +1105,21 @@ ubpf_exec_ex(
                     goto cleanup;
                 }
                 void* ptr = (void*)(uintptr_t)address;
-                if (!bounds_check(vm, ptr, SIMD_REGISTER_BYTES, type, cur_pc, mem, mem_len, stack_start, stack_length)) {
+                if (!bounds_check(
+                        vm, ptr, EBPF_SIMD_VECTOR_BYTES, type, cur_pc, mem, mem_len, stack_start, stack_length)) {
                     goto cleanup;
                 }
 
                 if (load) {
-                    if (!ubpf_check_shadow_stack(vm, stack_start, stack_length, shadow_stack, ptr, SIMD_REGISTER_BYTES)) {
+                    if (!ubpf_check_shadow_stack(
+                            vm, stack_start, stack_length, shadow_stack, ptr, EBPF_SIMD_VECTOR_BYTES)) {
                         vm->error_printf(stderr, "uBPF error: SIMD load from uninitialized stack at PC %u\n", cur_pc);
                         goto cleanup;
                     }
                     ubpf_simd_copy_vector(vreg[inst.dst], ptr);
                 } else {
                     ubpf_simd_copy_vector(ptr, vreg[inst.src]);
-                    ubpf_mark_shadow_stack(vm, stack_start, stack_length, shadow_stack, ptr, SIMD_REGISTER_BYTES);
+                    ubpf_mark_shadow_stack(vm, stack_start, stack_length, shadow_stack, ptr, EBPF_SIMD_VECTOR_BYTES);
                 }
                 break;
             }

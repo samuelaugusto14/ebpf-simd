@@ -167,6 +167,63 @@ ubpf_simd_copy_vector(void* dst, const void* src);
 void
 ubpf_simd_add32_imm(void* dst, int32_t imm);
 
+void
+ubpf_simd_add32_reg(void* dst, const void* src);
+
+void
+ubpf_simd_add64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_add64_reg(void* dst, const void* src);
+
+void
+ubpf_simd_sub32_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_sub32_reg(void* dst, const void* src);
+
+void
+ubpf_simd_sub64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_sub64_reg(void* dst, const void* src);
+
+void
+ubpf_simd_mul32_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_mul32_reg(void* dst, const void* src);
+
+void
+ubpf_simd_mul64_imm(void* dst, int32_t imm);
+
+void
+ubpf_simd_mul64_reg(void* dst, const void* src);
+
+void
+ubpf_simd_broadcast32(void* dst, uint32_t value);
+
+void
+ubpf_simd_broadcast64(void* dst, uint64_t value);
+
+uint32_t
+ubpf_simd_extract32(const void* src, unsigned int lane);
+
+uint64_t
+ubpf_simd_extract64(const void* src, unsigned int lane);
+
+void
+ubpf_simd_insert32(void* dst, unsigned int lane, uint32_t value);
+
+void
+ubpf_simd_insert64(void* dst, unsigned int lane, uint64_t value);
+
+uint32_t
+ubpf_simd_reduce_add32(const void* src);
+
+uint64_t
+ubpf_simd_reduce_add64(const void* src);
+
 /* The various JIT targets.  */
 
 // arm64
