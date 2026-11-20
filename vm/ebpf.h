@@ -49,9 +49,35 @@ enum bpf_register
     _BPF_REG_MAX,
 };
 
+enum bpf_vector_register
+{
+    BPF_VREG_0 = 0,
+    BPF_VREG_1,
+    BPF_VREG_2,
+    BPF_VREG_3,
+    BPF_VREG_4,
+    BPF_VREG_5,
+    BPF_VREG_6,
+    BPF_VREG_7,
+    BPF_VREG_8,
+    BPF_VREG_9,
+    BPF_VREG_10,
+    BPF_VREG_11,
+    BPF_VREG_12,
+    BPF_VREG_13,
+    BPF_VREG_14,
+    BPF_VREG_15,
+    _BPF_VREG_MAX,
+};
+
 #define EBPF_CLS_MASK 0x07
 #define EBPF_ALU_OP_MASK 0xf0
 #define EBPF_JMP_OP_MASK 0xf0
+
+/* Experimental SIMD v0.7 opcodes supported by the Legacy interpreter. */
+#define EBPF_OP_VLD 0xa1
+#define EBPF_OP_VST 0x83
+#define EBPF_OP_VADD32_IMM 0xe4
 
 #define EBPF_CLS_LD 0x00
 #define EBPF_CLS_LDX 0x01

@@ -87,6 +87,7 @@ struct ubpf_vm
 {
     struct ebpf_inst* insts;
     uint16_t num_insts;
+    bool has_simd;
     size_t insts_alloc_size;           // Actual allocation size (page-aligned) for mmap'd bytecode
     bool readonly_bytecode_enabled;     // Whether bytecode is stored in read-only memory
     ubpf_jit_ex_fn jitted;
@@ -158,6 +159,13 @@ struct ubpf_stack_frame
  */
 bool
 ubpf_is_valid_instruction(const struct ebpf_inst insts, char ** errmsg);
+
+/* SIMD operations on a 256-bit vector. */
+void
+ubpf_simd_copy_vector(void* dst, const void* src);
+
+void
+ubpf_simd_add32_imm(void* dst, int32_t imm);
 
 /* The various JIT targets.  */
 

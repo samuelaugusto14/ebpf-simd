@@ -55,6 +55,18 @@ target_link_libraries("ubpf"
     "ubpf_settings"
 )
 
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ubpf_target_processor)
+if(ubpf_target_processor MATCHES "^(x86_64|amd64)$" AND CMAKE_SIZEOF_VOID_P EQUAL 8
+   AND CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$" AND NOT MSVC)
+  include(CheckCCompilerFlag)
+  check_c_compiler_flag(-mavx2 UBPF_COMPILER_HAS_MAVX2)
+  if(UBPF_COMPILER_HAS_MAVX2)
+    target_sources("ubpf" PRIVATE ubpf_simd_avx2.c)
+    set_property(SOURCE ubpf_simd_avx2.c APPEND PROPERTY COMPILE_OPTIONS -mavx2)
+    target_compile_definitions("ubpf" PRIVATE UBPF_HAS_AVX2_BACKEND)
+  endif()
+endif()
+
 target_include_directories("ubpf" PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>

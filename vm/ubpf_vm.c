@@ -36,9 +36,10 @@
 #define SHIFT_MASK_32_BIT(X) ((X) & 0x1f)
 #define SHIFT_MASK_64_BIT(X) ((X) & 0x3f)
 #define DEFAULT_JITTER_BUFFER_SIZE 65536
+#define SIMD_REGISTER_BYTES 32
 
 static bool
-validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_insts, char** errmsg);
+validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_insts, bool* has_simd, char** errmsg);
 static bool
 bounds_check(
     const struct ubpf_vm* vm,
@@ -50,6 +51,22 @@ bounds_check(
     size_t mem_len,
     void* stack,
     size_t stack_len);
+
+static bool
+is_simd_opcode(uint8_t opcode)
+{
+    return opcode == EBPF_OP_VLD || opcode == EBPF_OP_VADD32_IMM || opcode == EBPF_OP_VST;
+}
+
+static bool
+simd_avx2_available(void)
+{
+#ifdef UBPF_HAS_AVX2_BACKEND
+    return __builtin_cpu_supports("avx2");
+#else
+    return false;
+#endif
+}
 
 bool
 ubpf_toggle_bounds_check(struct ubpf_vm* vm, bool enable)
@@ -290,7 +307,16 @@ ubpf_load(struct ubpf_vm* vm, const void* code, uint32_t code_len, char** errmsg
         return -1;
     }
 
-    if (!validate(vm, code, code_len / 8, errmsg)) {
+    bool has_simd;
+    if (!validate(vm, code, code_len / 8, &has_simd, errmsg)) {
+        return -1;
+    }
+    if (has_simd && vm->execution_profile != UBPF_EXECUTION_PROFILE_LEGACY) {
+        *errmsg = ubpf_error("SIMD bytecode requires the Legacy execution profile");
+        return -1;
+    }
+    if (has_simd && !simd_avx2_available()) {
+        *errmsg = ubpf_error("SIMD bytecode requires an available AVX2 backend");
         return -1;
     }
 
@@ -382,12 +408,14 @@ ubpf_load(struct ubpf_vm* vm, const void* code, uint32_t code_len, char** errmsg
         }
     }
 
+    vm->has_simd = has_simd;
     return 0;
 }
 
 void
 ubpf_unload_code(struct ubpf_vm* vm)
 {
+    vm->has_simd = false;
 
     // Reset the stack usage amounts when code is unloaded.
     free(vm->local_func_stack_usage);
@@ -622,6 +650,18 @@ ubpf_validate_shadow_register(const struct ubpf_vm* vm, uint32_t pc, uint16_t* s
         return true;
     }
 
+    if (inst.opcode == EBPF_OP_VADD32_IMM) {
+        return true; // This instruction only reads the zero-initialized vector bank.
+    }
+    if (inst.opcode == EBPF_OP_VLD || inst.opcode == EBPF_OP_VST) {
+        unsigned int base = inst.opcode == EBPF_OP_VLD ? inst.src : inst.dst;
+        if ((*shadow_registers & REGISTER_TO_SHADOW_MASK(base)) == 0) {
+            vm->error_printf(stderr, "Error: %u: SIMD address base r%u is not initialized.\n", pc, base);
+            return false;
+        }
+        return true;
+    }
+
     // Determine which registers are valid before and after the instruction.
     bool source_register_valid_before_instruction = (*shadow_registers) & REGISTER_TO_SHADOW_MASK(inst.src);
     bool destination_register_valid_before_instruction = (*shadow_registers) & REGISTER_TO_SHADOW_MASK(inst.dst);
@@ -774,6 +814,27 @@ ubpf_validate_shadow_register(const struct ubpf_vm* vm, uint32_t pc, uint16_t* s
     return true;
 }
 
+static bool
+compute_effective_address(
+    const struct ubpf_vm* vm, uint64_t base, int16_t offset, const char* type, uint16_t pc, uint64_t* address)
+{
+    if (offset >= 0) {
+        if (base > UINT64_MAX - (uint64_t)offset) {
+            vm->error_printf(stderr, "uBPF error: address overflow in %s at PC %u\n", type, pc);
+            return false;
+        }
+        *address = base + (uint64_t)offset;
+    } else {
+        uint64_t distance = (uint64_t)(-(int64_t)offset);
+        if (base < distance) {
+            vm->error_printf(stderr, "uBPF error: address underflow in %s at PC %u\n", type, pc);
+            return false;
+        }
+        *address = base - distance;
+    }
+    return true;
+}
+
 int
 ubpf_exec_ex(
     const struct ubpf_vm* vm,
@@ -791,6 +852,9 @@ ubpf_exec_ex(
     const struct ebpf_inst* insts = vm->insts;
     uint64_t* reg;
     uint64_t _reg[16]; // 16 for API compatibility with ubpf_debug_fn
+#ifdef UBPF_HAS_AVX2_BACKEND
+    uint8_t vreg[_BPF_VREG_MAX][SIMD_REGISTER_BYTES];
+#endif
     uint64_t stack_frame_index = 0;
     int return_value = -1;
     void* external_dispatcher_cookie = mem;
@@ -803,8 +867,6 @@ ubpf_exec_ex(
     int32_t divisor32 = 0;
 
     // Hoisted from BOUNDS_CHECK macros to reduce stack usage.
-    uint64_t _base_addr = 0;
-    int64_t _offset = 0;
     uint64_t _eff_addr = 0;
     void* _ptr = NULL;
 
@@ -823,6 +885,12 @@ ubpf_exec_ex(
         return -1;
     }
 
+#ifdef UBPF_HAS_AVX2_BACKEND
+    if (vm->has_simd) {
+        memset(vreg, 0, sizeof(vreg));
+    }
+#endif
+
     ((struct ubpf_vm*)vm)->execution_started = true;
 
     struct ubpf_stack_frame stack_frames[UBPF_MAX_CALL_DEPTH] = {
@@ -830,7 +898,8 @@ ubpf_exec_ex(
     };
 
     if (vm->undefined_behavior_check_enabled) {
-        shadow_stack = calloc(stack_length / 8, 1);
+        size_t shadow_stack_size = stack_length / 8 + (stack_length % 8 != 0);
+        shadow_stack = calloc(shadow_stack_size == 0 ? 1 : shadow_stack_size, 1);
         if (!shadow_stack) {
             return_value = -1;
             goto cleanup;
@@ -891,6 +960,52 @@ ubpf_exec_ex(
                 (uint8_t*)shadow_stack // Bitmask of the stack that has been modified since the start of the program.
             );
         }
+
+#ifdef UBPF_HAS_AVX2_BACKEND
+        if (vm->has_simd && is_simd_opcode(inst.opcode)) {
+            switch (inst.opcode) {
+            case EBPF_OP_VADD32_IMM:
+                ubpf_simd_add32_imm(vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VLD:
+            case EBPF_OP_VST: {
+                bool load = inst.opcode == EBPF_OP_VLD;
+                const char* type = load ? "SIMD load" : "SIMD store";
+                uint8_t base = load ? inst.src : inst.dst;
+                uint64_t address;
+
+                if (!vm->bounds_check_enabled) {
+                    vm->error_printf(stderr, "uBPF error: %s requires bounds checking at PC %u\n", type, cur_pc);
+                    goto cleanup;
+                }
+                if (!compute_effective_address(vm, reg[base], inst.offset, type, cur_pc, &address)) {
+                    goto cleanup;
+                }
+                void* ptr = (void*)(uintptr_t)address;
+                if (!bounds_check(vm, ptr, SIMD_REGISTER_BYTES, type, cur_pc, mem, mem_len, stack_start, stack_length)) {
+                    goto cleanup;
+                }
+
+                if (load) {
+                    if (!ubpf_check_shadow_stack(vm, stack_start, stack_length, shadow_stack, ptr, SIMD_REGISTER_BYTES)) {
+                        vm->error_printf(stderr, "uBPF error: SIMD load from uninitialized stack at PC %u\n", cur_pc);
+                        goto cleanup;
+                    }
+                    ubpf_simd_copy_vector(vreg[inst.dst], ptr);
+                } else {
+                    ubpf_simd_copy_vector(ptr, vreg[inst.src]);
+                    ubpf_mark_shadow_stack(vm, stack_start, stack_length, shadow_stack, ptr, SIMD_REGISTER_BYTES);
+                }
+                break;
+            }
+            default:
+                vm->error_printf(stderr, "uBPF error: unhandled SIMD opcode 0x%02x at PC %u\n", inst.opcode, cur_pc);
+                goto cleanup;
+            }
+            // SIMD destinations do not take the scalar ALU32 post-processing path.
+            continue;
+        }
+#endif
 
         switch (inst.opcode) {
         case EBPF_OP_ADD_IMM:
@@ -1235,32 +1350,14 @@ ubpf_exec_ex(
             reg[inst.dst] = (int64_t)reg[inst.dst] >> SHIFT_MASK_64_BIT(reg[inst.src]);
             break;
 
-            /*
-             * Helper macro to safely compute effective address with overflow detection.
-             * Computes: base_addr + offset, handling signed offset and overflow/underflow.
-             * Stores result in _eff_addr variable.
-             * On overflow/underflow, prints error and jumps to cleanup.
-             */
-#define COMPUTE_EFFECTIVE_ADDR(base_reg, is_load)                                                        \
-    _base_addr = reg[base_reg];                                                                           \
-    _offset = inst.offset;                                                                                \
-    if (_offset >= 0) {                                                                                   \
-        if (_base_addr > UINT64_MAX - (uint64_t)_offset) {                                               \
-            vm->error_printf(stderr, "uBPF error: address overflow in %s at PC %u\n",                    \
-                             is_load ? "load" : "store", cur_pc);                                        \
-            return_value = -1;                                                                            \
-            goto cleanup;                                                                                 \
-        }                                                                                                 \
-        _eff_addr = _base_addr + (uint64_t)_offset;                                                      \
-    } else {                                                                                              \
-        if (_base_addr < (uint64_t)(-_offset)) {                                                         \
-            vm->error_printf(stderr, "uBPF error: address underflow in %s at PC %u\n",                   \
-                             is_load ? "load" : "store", cur_pc);                                        \
-            return_value = -1;                                                                            \
-            goto cleanup;                                                                                 \
-        }                                                                                                 \
-        _eff_addr = _base_addr - (uint64_t)(-_offset);                                                   \
-    }
+#define COMPUTE_EFFECTIVE_ADDR(base_reg, is_load)                                                            \
+    do {                                                                                                    \
+        const char* access_type = (is_load) ? "load" : "store";                                               \
+        if (!compute_effective_address(vm, reg[(base_reg)], inst.offset, access_type, cur_pc, &_eff_addr)) {  \
+            return_value = -1;                                                                              \
+            goto cleanup;                                                                                   \
+        }                                                                                                   \
+    } while (0)
 
 /*
              * HACK runtime bounds check
@@ -1268,7 +1365,7 @@ ubpf_exec_ex(
              * Needed since we don't have a verifier yet.
              */
 #define BOUNDS_CHECK_LOAD(size)                                                                           \
-    COMPUTE_EFFECTIVE_ADDR(inst.src, true)                                                                \
+    COMPUTE_EFFECTIVE_ADDR(inst.src, true);                                                               \
     do {                                                                                                  \
         _ptr = (void*)_eff_addr;                                                                          \
         if (!ubpf_check_shadow_stack(                                                                     \
@@ -1291,7 +1388,7 @@ ubpf_exec_ex(
     } while (0)
     
 #define BOUNDS_CHECK_STORE(size)                                                                          \
-    COMPUTE_EFFECTIVE_ADDR(inst.dst, false)                                                               \
+    COMPUTE_EFFECTIVE_ADDR(inst.dst, false);                                                              \
     do {                                                                                                  \
         _ptr = (void*)_eff_addr;                                                                          \
         if (!bounds_check(                                                                                \
@@ -1807,7 +1904,7 @@ ubpf_exec(const struct ubpf_vm* vm, void* mem, size_t mem_len, uint64_t* bpf_ret
 static bool check_for_self_contained_sub_programs(const struct ebpf_inst* insts, uint32_t num_insts, char** errmsg);
 
 static bool
-validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_insts, char** errmsg)
+validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_insts, bool* has_simd, char** errmsg)
 {
     if (num_insts >= UBPF_MAX_INSTS) {
         *errmsg = ubpf_error("too many instructions (max %u)", UBPF_MAX_INSTS);
@@ -1818,10 +1915,23 @@ validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_i
         return false;
     }
 
+    *has_simd = false;
+    bool has_local_call = false;
     int i;
     for (i = 0; i < num_insts; i++) {
         struct ebpf_inst inst = insts[i];
         bool store = false;
+
+        if (is_simd_opcode(inst.opcode)) {
+            char* detail = NULL;
+            if (!ubpf_is_valid_instruction(inst, &detail)) {
+                *errmsg = ubpf_error("invalid SIMD instruction at PC %d: %s", i, detail ? detail : "invalid fields");
+                free(detail);
+                return false;
+            }
+            *has_simd = true;
+            continue;
+        }
 
         switch (inst.opcode) {
         case EBPF_OP_ADD_IMM:
@@ -2012,6 +2122,7 @@ validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_i
                     return false;
                 }
             } else if (inst.src == 1) {
+                has_local_call = true;
                 int call_target = i + (inst.imm + 1);
                 if (call_target < 0 || call_target >= num_insts) {
                     *errmsg =
@@ -2117,6 +2228,11 @@ validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_i
         if (!ubpf_is_valid_instruction(inst, errmsg)) {
             return false;
         }
+    }
+
+    if (*has_simd && has_local_call) {
+        *errmsg = ubpf_error("SIMD bytecode currently supports only one subprogram");
+        return false;
     }
 
     // If the program is syntactically valid, check if it consists of self-contained sub-programs.

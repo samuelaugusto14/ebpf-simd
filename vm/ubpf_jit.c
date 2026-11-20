@@ -33,6 +33,10 @@
 int
 ubpf_translate_ex(struct ubpf_vm* vm, uint8_t* buffer, size_t* size, char** errmsg, enum JitMode jit_mode)
 {
+    if (vm->has_simd) {
+        *errmsg = ubpf_error("SIMD bytecode is supported only by the Legacy interpreter");
+        return -1;
+    }
     if (vm->execution_profile == UBPF_EXECUTION_PROFILE_SAFE) {
         *errmsg = ubpf_error("safe execution profile is interpreter-only");
         return -1;
