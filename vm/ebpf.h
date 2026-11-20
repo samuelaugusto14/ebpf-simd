@@ -70,6 +70,16 @@ enum bpf_vector_register
     _BPF_VREG_MAX,
 };
 
+/* Implicit vector operands in the SIMD ISA. */
+#define BPF_VREG_MASK BPF_VREG_15
+#define BPF_VREG_INDEX BPF_VREG_14
+
+enum ebpf_simd_comparison_mode
+{
+    EBPF_SIMD_CMP_UNSIGNED = 0,
+    EBPF_SIMD_CMP_SIGNED = 1,
+};
+
 #define EBPF_CLS_MASK 0x07
 #define EBPF_ALU_OP_MASK 0xf0
 #define EBPF_JMP_OP_MASK 0xf0
@@ -135,6 +145,19 @@ enum bpf_vector_register
 #define EBPF_OP_VTOBE64 0xb0
 #define EBPF_OP_VTOLE32 0xa8
 #define EBPF_OP_VTOLE64 0xb8
+
+#define EBPF_OP_VCMP_EQ32_IMM 0xe6
+#define EBPF_OP_VCMP_EQ32_REG 0xee
+#define EBPF_OP_VCMP_EQ64_IMM 0xe5
+#define EBPF_OP_VCMP_EQ64_REG 0xed
+#define EBPF_OP_VCMP_GT32_IMM 0xf6
+#define EBPF_OP_VCMP_GT32_REG 0xfe
+#define EBPF_OP_VCMP_GT64_IMM 0xf5
+#define EBPF_OP_VCMP_GT64_REG 0xfd
+#define EBPF_OP_VMOVM32 0x88
+#define EBPF_OP_VMOVM64 0x98
+#define EBPF_OP_VMOVMSK32 0xc0
+#define EBPF_OP_VMOVMSK64 0xd0
 
 #define EBPF_SIMD_VECTOR_BYTES 32
 #define EBPF_SIMD_LANES32 (EBPF_SIMD_VECTOR_BYTES / sizeof(uint32_t))

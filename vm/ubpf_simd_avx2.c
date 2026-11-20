@@ -453,3 +453,101 @@ ubpf_simd_to_le64(void* dst)
 {
     UNUSED_PARAMETER(dst);
 }
+
+/* Flipping the sign bit maps unsigned order to signed order. */
+static __m256i
+compare_gt32(__m256i lhs, __m256i rhs, bool is_signed)
+{
+    if (!is_signed) {
+        __m256i high_bit = _mm256_set1_epi32(INT32_MIN);
+        lhs = _mm256_xor_si256(lhs, high_bit);
+        rhs = _mm256_xor_si256(rhs, high_bit);
+    }
+    return _mm256_cmpgt_epi32(lhs, rhs);
+}
+
+static __m256i
+compare_gt64(__m256i lhs, __m256i rhs, bool is_signed)
+{
+    if (!is_signed) {
+        __m256i high_bit = _mm256_set1_epi64x(INT64_MIN);
+        lhs = _mm256_xor_si256(lhs, high_bit);
+        rhs = _mm256_xor_si256(rhs, high_bit);
+    }
+    return _mm256_cmpgt_epi64(lhs, rhs);
+}
+
+void
+ubpf_simd_cmp_eq32_imm(void* mask, const void* lhs, int32_t imm)
+{
+    store_vector(mask, _mm256_cmpeq_epi32(load_vector(lhs), _mm256_set1_epi32(imm)));
+}
+
+void
+ubpf_simd_cmp_eq32_reg(void* mask, const void* lhs, const void* rhs)
+{
+    store_vector(mask, _mm256_cmpeq_epi32(load_vector(lhs), load_vector(rhs)));
+}
+
+void
+ubpf_simd_cmp_eq64_imm(void* mask, const void* lhs, int32_t imm)
+{
+    store_vector(mask, _mm256_cmpeq_epi64(load_vector(lhs), _mm256_set1_epi64x((int64_t)imm)));
+}
+
+void
+ubpf_simd_cmp_eq64_reg(void* mask, const void* lhs, const void* rhs)
+{
+    store_vector(mask, _mm256_cmpeq_epi64(load_vector(lhs), load_vector(rhs)));
+}
+
+void
+ubpf_simd_cmp_gt32_imm(void* mask, const void* lhs, int32_t imm, bool is_signed)
+{
+    store_vector(mask, compare_gt32(load_vector(lhs), _mm256_set1_epi32(imm), is_signed));
+}
+
+void
+ubpf_simd_cmp_gt32_reg(void* mask, const void* lhs, const void* rhs, bool is_signed)
+{
+    store_vector(mask, compare_gt32(load_vector(lhs), load_vector(rhs), is_signed));
+}
+
+void
+ubpf_simd_cmp_gt64_imm(void* mask, const void* lhs, int32_t imm, bool is_signed)
+{
+    store_vector(mask, compare_gt64(load_vector(lhs), _mm256_set1_epi64x((int64_t)imm), is_signed));
+}
+
+void
+ubpf_simd_cmp_gt64_reg(void* mask, const void* lhs, const void* rhs, bool is_signed)
+{
+    store_vector(mask, compare_gt64(load_vector(lhs), load_vector(rhs), is_signed));
+}
+
+void
+ubpf_simd_move_masked32(void* dst, const void* src, const void* mask)
+{
+    // VPBLENDVB selects by byte. Expand each lane's sign bit to all of its bytes.
+    __m256i active_lanes = _mm256_srai_epi32(load_vector(mask), SHIFT32_MASK);
+    store_vector(dst, _mm256_blendv_epi8(load_vector(dst), load_vector(src), active_lanes));
+}
+
+void
+ubpf_simd_move_masked64(void* dst, const void* src, const void* mask)
+{
+    __m256i active_lanes = _mm256_cmpgt_epi64(_mm256_setzero_si256(), load_vector(mask));
+    store_vector(dst, _mm256_blendv_epi8(load_vector(dst), load_vector(src), active_lanes));
+}
+
+uint32_t
+ubpf_simd_mask_bits32(const void* mask)
+{
+    return (uint32_t)_mm256_movemask_ps(_mm256_castsi256_ps(load_vector(mask)));
+}
+
+uint32_t
+ubpf_simd_mask_bits64(const void* mask)
+{
+    return (uint32_t)_mm256_movemask_pd(_mm256_castsi256_pd(load_vector(mask)));
+}

@@ -302,6 +302,42 @@ ubpf_simd_to_le32(void* dst);
 void
 ubpf_simd_to_le64(void* dst);
 
+void
+ubpf_simd_cmp_eq32_imm(void* mask, const void* lhs, int32_t imm);
+
+void
+ubpf_simd_cmp_eq32_reg(void* mask, const void* lhs, const void* rhs);
+
+void
+ubpf_simd_cmp_eq64_imm(void* mask, const void* lhs, int32_t imm);
+
+void
+ubpf_simd_cmp_eq64_reg(void* mask, const void* lhs, const void* rhs);
+
+void
+ubpf_simd_cmp_gt32_imm(void* mask, const void* lhs, int32_t imm, bool is_signed);
+
+void
+ubpf_simd_cmp_gt32_reg(void* mask, const void* lhs, const void* rhs, bool is_signed);
+
+void
+ubpf_simd_cmp_gt64_imm(void* mask, const void* lhs, int32_t imm, bool is_signed);
+
+void
+ubpf_simd_cmp_gt64_reg(void* mask, const void* lhs, const void* rhs, bool is_signed);
+
+void
+ubpf_simd_move_masked32(void* dst, const void* src, const void* mask);
+
+void
+ubpf_simd_move_masked64(void* dst, const void* src, const void* mask);
+
+uint32_t
+ubpf_simd_mask_bits32(const void* mask);
+
+uint32_t
+ubpf_simd_mask_bits64(const void* mask);
+
 /* The various JIT targets.  */
 
 // arm64

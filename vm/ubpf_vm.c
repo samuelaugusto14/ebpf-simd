@@ -108,6 +108,18 @@ is_simd_opcode(uint8_t opcode)
     case EBPF_OP_VTOBE64:
     case EBPF_OP_VTOLE32:
     case EBPF_OP_VTOLE64:
+    case EBPF_OP_VCMP_EQ32_IMM:
+    case EBPF_OP_VCMP_EQ32_REG:
+    case EBPF_OP_VCMP_EQ64_IMM:
+    case EBPF_OP_VCMP_EQ64_REG:
+    case EBPF_OP_VCMP_GT32_IMM:
+    case EBPF_OP_VCMP_GT32_REG:
+    case EBPF_OP_VCMP_GT64_IMM:
+    case EBPF_OP_VCMP_GT64_REG:
+    case EBPF_OP_VMOVM32:
+    case EBPF_OP_VMOVM64:
+    case EBPF_OP_VMOVMSK32:
+    case EBPF_OP_VMOVMSK64:
         return true;
     default:
         return false;
@@ -730,6 +742,8 @@ ubpf_validate_shadow_register(const struct ubpf_vm* vm, uint32_t pc, uint16_t* s
         case EBPF_OP_VEXTRACT64:
         case EBPF_OP_VREDUCE_ADD32:
         case EBPF_OP_VREDUCE_ADD64:
+        case EBPF_OP_VMOVMSK32:
+        case EBPF_OP_VMOVMSK64:
             *shadow_registers |= REGISTER_TO_SHADOW_MASK(inst.dst);
             break;
         default:
@@ -1193,6 +1207,46 @@ ubpf_exec_ex(
                 break;
             case EBPF_OP_VTOLE64:
                 ubpf_simd_to_le64(vreg[inst.dst]);
+                break;
+            case EBPF_OP_VCMP_EQ32_IMM:
+                ubpf_simd_cmp_eq32_imm(vreg[BPF_VREG_MASK], vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VCMP_EQ32_REG:
+                ubpf_simd_cmp_eq32_reg(vreg[BPF_VREG_MASK], vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VCMP_EQ64_IMM:
+                ubpf_simd_cmp_eq64_imm(vreg[BPF_VREG_MASK], vreg[inst.dst], inst.imm);
+                break;
+            case EBPF_OP_VCMP_EQ64_REG:
+                ubpf_simd_cmp_eq64_reg(vreg[BPF_VREG_MASK], vreg[inst.dst], vreg[inst.src]);
+                break;
+            case EBPF_OP_VCMP_GT32_IMM:
+                ubpf_simd_cmp_gt32_imm(
+                    vreg[BPF_VREG_MASK], vreg[inst.dst], inst.imm, inst.offset == EBPF_SIMD_CMP_SIGNED);
+                break;
+            case EBPF_OP_VCMP_GT32_REG:
+                ubpf_simd_cmp_gt32_reg(
+                    vreg[BPF_VREG_MASK], vreg[inst.dst], vreg[inst.src], inst.offset == EBPF_SIMD_CMP_SIGNED);
+                break;
+            case EBPF_OP_VCMP_GT64_IMM:
+                ubpf_simd_cmp_gt64_imm(
+                    vreg[BPF_VREG_MASK], vreg[inst.dst], inst.imm, inst.offset == EBPF_SIMD_CMP_SIGNED);
+                break;
+            case EBPF_OP_VCMP_GT64_REG:
+                ubpf_simd_cmp_gt64_reg(
+                    vreg[BPF_VREG_MASK], vreg[inst.dst], vreg[inst.src], inst.offset == EBPF_SIMD_CMP_SIGNED);
+                break;
+            case EBPF_OP_VMOVM32:
+                ubpf_simd_move_masked32(vreg[inst.dst], vreg[inst.src], vreg[BPF_VREG_MASK]);
+                break;
+            case EBPF_OP_VMOVM64:
+                ubpf_simd_move_masked64(vreg[inst.dst], vreg[inst.src], vreg[BPF_VREG_MASK]);
+                break;
+            case EBPF_OP_VMOVMSK32:
+                reg[inst.dst] = ubpf_simd_mask_bits32(vreg[BPF_VREG_MASK]);
+                break;
+            case EBPF_OP_VMOVMSK64:
+                reg[inst.dst] = ubpf_simd_mask_bits64(vreg[BPF_VREG_MASK]);
                 break;
             case EBPF_OP_VLD:
             case EBPF_OP_VST: {
@@ -2151,6 +2205,7 @@ validate(const struct ubpf_vm* vm, const struct ebpf_inst* insts, uint32_t num_i
         struct ebpf_inst inst = insts[i];
         bool store = false;
 
+        // VCMP uses the JMP class bits and carries its comparison mode in offset.
         if (is_simd_opcode(inst.opcode)) {
             char* detail = NULL;
             if (!ubpf_is_valid_instruction(inst, &detail)) {
