@@ -124,6 +124,10 @@ is_simd_opcode(uint8_t opcode)
     case EBPF_OP_VLDM64:
     case EBPF_OP_VSTM32:
     case EBPF_OP_VSTM64:
+    case EBPF_OP_VGATHER32:
+    case EBPF_OP_VGATHER64:
+    case EBPF_OP_VSCATTER32:
+    case EBPF_OP_VSCATTER64:
         return true;
     default:
         return false;
@@ -754,6 +758,10 @@ ubpf_validate_shadow_register(const struct ubpf_vm* vm, uint32_t pc, uint16_t* s
         case EBPF_OP_VLDM64:
         case EBPF_OP_VSTM32:
         case EBPF_OP_VSTM64:
+        case EBPF_OP_VGATHER32:
+        case EBPF_OP_VGATHER64:
+        case EBPF_OP_VSCATTER32:
+        case EBPF_OP_VSCATTER64:
             // Masked memory checks its scalar base after determining the active lanes.
             break;
         default:
@@ -935,6 +943,41 @@ compute_effective_address(
     }
     return true;
 }
+
+#ifdef UBPF_HAS_AVX2_BACKEND
+static bool
+compute_indexed_address(
+    const struct ubpf_vm* vm, uint64_t base, int32_t offset, uint64_t index, size_t lane_size, const char* type,
+    uint16_t pc, uint64_t* address)
+{
+    if (index > UINT64_MAX / lane_size) {
+        vm->error_printf(stderr, "uBPF error: index scale overflow in %s at PC %u\n", type, pc);
+        return false;
+    }
+    uint64_t displacement = index * lane_size;
+    if (offset < 0) {
+        uint64_t distance = (uint64_t)(-(int64_t)offset);
+        if (displacement < distance) {
+            // Here displacement fits in int32_t because it is smaller than the offset magnitude.
+            return compute_effective_address(vm, base, offset + (int32_t)displacement, type, pc, address);
+        }
+        displacement -= distance;
+        offset = 0;
+    }
+    if (base > UINT64_MAX - displacement) {
+        vm->error_printf(stderr, "uBPF error: address overflow in %s at PC %u\n", type, pc);
+        return false;
+    }
+    return compute_effective_address(vm, base + displacement, offset, type, pc, address);
+}
+
+static bool
+region_contains_address(const void* region, size_t length, uint64_t address)
+{
+    uintptr_t start = (uintptr_t)region;
+    return region && length <= UINTPTR_MAX - start && address >= start && address - start < length;
+}
+#endif
 
 int
 ubpf_exec_ex(
@@ -1261,9 +1304,17 @@ ubpf_exec_ex(
             case EBPF_OP_VLDM32:
             case EBPF_OP_VLDM64:
             case EBPF_OP_VSTM32:
-            case EBPF_OP_VSTM64: {
-                bool load = inst.opcode == EBPF_OP_VLDM32 || inst.opcode == EBPF_OP_VLDM64;
-                bool lanes32 = inst.opcode == EBPF_OP_VLDM32 || inst.opcode == EBPF_OP_VSTM32;
+            case EBPF_OP_VSTM64:
+            case EBPF_OP_VGATHER32:
+            case EBPF_OP_VGATHER64:
+            case EBPF_OP_VSCATTER32:
+            case EBPF_OP_VSCATTER64: {
+                bool gather = inst.opcode == EBPF_OP_VGATHER32 || inst.opcode == EBPF_OP_VGATHER64;
+                bool scatter = inst.opcode == EBPF_OP_VSCATTER32 || inst.opcode == EBPF_OP_VSCATTER64;
+                bool indexed = gather || scatter;
+                bool load = gather || inst.opcode == EBPF_OP_VLDM32 || inst.opcode == EBPF_OP_VLDM64;
+                bool lanes32 = inst.opcode == EBPF_OP_VLDM32 || inst.opcode == EBPF_OP_VSTM32 ||
+                               inst.opcode == EBPF_OP_VGATHER32 || inst.opcode == EBPF_OP_VSCATTER32;
                 const void* mask = vreg[BPF_VREG_MASK];
                 uint32_t active = lanes32 ? ubpf_simd_mask_bits32(mask) : ubpf_simd_mask_bits64(mask);
                 if (active == 0) {
@@ -1271,6 +1322,9 @@ ubpf_exec_ex(
                 }
 
                 const char* type = load ? "SIMD masked load" : "SIMD masked store";
+                if (indexed) {
+                    type = gather ? "SIMD gather" : "SIMD scatter";
+                }
                 unsigned int base = load ? inst.src : inst.dst;
                 if (vm->undefined_behavior_check_enabled && !(shadow_registers & REGISTER_TO_SHADOW_MASK(base))) {
                     vm->error_printf(stderr, "uBPF error: %s base r%u is not initialized at PC %u\n", type, base, cur_pc);
@@ -1281,17 +1335,30 @@ ubpf_exec_ex(
                     goto cleanup;
                 }
 
+                uint64_t base_address = reg[base];
                 size_t lane_size = lanes32 ? sizeof(uint32_t) : sizeof(uint64_t);
                 size_t lane_count = EBPF_SIMD_VECTOR_BYTES / lane_size;
+                const void* indices = vreg[BPF_VREG_INDEX];
+                const void* native_base = NULL;
                 void* addresses[EBPF_SIMD_LANES32] = {0};
                 for (size_t lane = 0; lane < lane_count; lane++) {
                     if (!(active & (UINT32_C(1) << lane))) {
                         continue;
                     }
-                    int32_t lane_offset = (int32_t)inst.offset + (int32_t)(lane * lane_size);
                     uint64_t address;
-                    if (!compute_effective_address(vm, reg[base], lane_offset, type, cur_pc, &address)) {
-                        goto cleanup;
+                    uint64_t index = 0;
+                    if (indexed) {
+                        index = lanes32 ? ubpf_simd_extract32(indices, (unsigned int)lane)
+                                        : ubpf_simd_extract64(indices, (unsigned int)lane);
+                        if (!compute_indexed_address(
+                                vm, base_address, inst.offset, index, lane_size, type, cur_pc, &address)) {
+                            goto cleanup;
+                        }
+                    } else {
+                        int32_t lane_offset = (int32_t)inst.offset + (int32_t)(lane * lane_size);
+                        if (!compute_effective_address(vm, base_address, lane_offset, type, cur_pc, &address)) {
+                            goto cleanup;
+                        }
                     }
                     void* ptr = (void*)(uintptr_t)address;
                     if (!bounds_check(vm, ptr, (int)lane_size, type, cur_pc, mem, mem_len, stack_start, stack_length)) {
@@ -1302,12 +1369,31 @@ ubpf_exec_ex(
                         goto cleanup;
                     }
                     addresses[lane] = ptr;
+                    if (gather && !native_base) {
+                        // Recover base + offset from a validated lane without checking an inactive address.
+                        uint64_t displacement = index * lane_size; // The scale was checked above.
+                        if (address >= displacement) {
+                            uint64_t candidate = address - displacement;
+                            if (index == 0 || region_contains_address(mem, mem_len, candidate) ||
+                                region_contains_address(stack_start, stack_length, candidate)) {
+                                native_base = (const void*)(uintptr_t)candidate;
+                            }
+                        }
+                    }
                 }
 
                 if (load) {
-                    ubpf_simd_load_masked_contiguous(vreg[inst.dst], addresses, mask, active, lane_size);
+                    if (gather) {
+                        ubpf_simd_gather(vreg[inst.dst], addresses, native_base, indices, mask, active, lane_size);
+                    } else {
+                        ubpf_simd_load_masked_contiguous(vreg[inst.dst], addresses, mask, active, lane_size);
+                    }
                 } else {
-                    ubpf_simd_store_masked_contiguous(addresses, vreg[inst.src], mask, active, lane_size);
+                    if (scatter) {
+                        ubpf_simd_scatter(addresses, vreg[inst.src], active, lane_size);
+                    } else {
+                        ubpf_simd_store_masked_contiguous(addresses, vreg[inst.src], mask, active, lane_size);
+                    }
                     for (size_t lane = 0; lane < lane_count; lane++) {
                         if (active & (UINT32_C(1) << lane)) {
                             ubpf_mark_shadow_stack(vm, stack_start, stack_length, shadow_stack, addresses[lane], lane_size);

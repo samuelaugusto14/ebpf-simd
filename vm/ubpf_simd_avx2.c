@@ -569,6 +569,26 @@ can_use_masked_intrinsics(void* const* addresses, uint32_t active, size_t lane_s
     return (active & 1) && (uintptr_t)addresses[0] % lane_size == 0;
 }
 
+static void
+load_active_lanes(void* dst, void* const* addresses, uint32_t active, size_t lane_size)
+{
+    for (size_t lane = 0; lane < EBPF_SIMD_VECTOR_BYTES / lane_size; lane++) {
+        if (active & (UINT32_C(1) << lane)) {
+            memcpy((uint8_t*)dst + lane * lane_size, addresses[lane], lane_size);
+        }
+    }
+}
+
+static void
+store_active_lanes(void* const* addresses, const void* src, uint32_t active, size_t lane_size)
+{
+    for (size_t lane = 0; lane < EBPF_SIMD_VECTOR_BYTES / lane_size; lane++) {
+        if (active & (UINT32_C(1) << lane)) {
+            memcpy(addresses[lane], (const uint8_t*)src + lane * lane_size, lane_size);
+        }
+    }
+}
+
 void
 ubpf_simd_load_masked_contiguous(
     void* dst, void* const* addresses, const void* mask, uint32_t active, size_t lane_size)
@@ -583,11 +603,7 @@ ubpf_simd_load_masked_contiguous(
         return;
     }
 
-    for (size_t lane = 0; lane < EBPF_SIMD_VECTOR_BYTES / lane_size; lane++) {
-        if (active & (UINT32_C(1) << lane)) {
-            memcpy((uint8_t*)dst + lane * lane_size, addresses[lane], lane_size);
-        }
-    }
+    load_active_lanes(dst, addresses, active, lane_size);
 }
 
 void
@@ -605,9 +621,38 @@ ubpf_simd_store_masked_contiguous(
         return;
     }
 
-    for (size_t lane = 0; lane < EBPF_SIMD_VECTOR_BYTES / lane_size; lane++) {
-        if (active & (UINT32_C(1) << lane)) {
-            memcpy(addresses[lane], (const uint8_t*)src + lane * lane_size, lane_size);
+    store_active_lanes(addresses, src, active, lane_size);
+}
+
+void
+ubpf_simd_gather(
+    void* dst, void* const* addresses, const void* base, const void* indices, const void* mask, uint32_t active,
+    size_t lane_size)
+{
+    if (base && (uintptr_t)base % lane_size == 0) {
+        __m256i index_vector = load_vector(indices);
+        bool lanes32 = lane_size == sizeof(uint32_t);
+        uint32_t high_bits = lanes32 ? (uint32_t)_mm256_movemask_ps(_mm256_castsi256_ps(index_vector))
+                                     : (uint32_t)_mm256_movemask_pd(_mm256_castsi256_pd(index_vector));
+        // AVX2 interprets indices as signed. Check the sign bit of active indices only.
+        if ((active & high_bits) == 0) {
+            __m256i previous = load_vector(dst);
+            __m256i raw_mask = load_vector(mask);
+            __m256i value =
+                lanes32 ? _mm256_mask_i32gather_epi32(previous, (const int*)base, index_vector, raw_mask, 4)
+                        : _mm256_mask_i64gather_epi64(previous, (const long long*)base, index_vector, raw_mask, 8);
+            store_vector(dst, value);
+            return;
         }
     }
+
+    load_active_lanes(dst, addresses, active, lane_size);
+}
+
+void
+ubpf_simd_scatter(void* const* addresses, const void* src, uint32_t active, size_t lane_size)
+{
+    uint8_t values[EBPF_SIMD_VECTOR_BYTES];
+    store_vector(values, load_vector(src));
+    store_active_lanes(addresses, values, active, lane_size);
 }

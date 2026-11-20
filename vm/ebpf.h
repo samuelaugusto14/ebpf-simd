@@ -164,6 +164,11 @@ enum ebpf_simd_comparison_mode
 #define EBPF_OP_VSTM32 0x8b
 #define EBPF_OP_VSTM64 0x9b
 
+#define EBPF_OP_VGATHER32 0xc1
+#define EBPF_OP_VGATHER64 0xd1
+#define EBPF_OP_VSCATTER32 0xa3
+#define EBPF_OP_VSCATTER64 0xb3
+
 #define EBPF_SIMD_VECTOR_BYTES 32
 #define EBPF_SIMD_LANES32 (EBPF_SIMD_VECTOR_BYTES / sizeof(uint32_t))
 #define EBPF_SIMD_LANES64 (EBPF_SIMD_VECTOR_BYTES / sizeof(uint64_t))

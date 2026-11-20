@@ -347,6 +347,15 @@ void
 ubpf_simd_store_masked_contiguous(
     void* const* addresses, const void* src, const void* mask, uint32_t active, size_t lane_size);
 
+/* The optional base reproduces the validated addresses with the original indices and scale. */
+void
+ubpf_simd_gather(
+    void* dst, void* const* addresses, const void* base, const void* indices, const void* mask, uint32_t active,
+    size_t lane_size);
+
+void
+ubpf_simd_scatter(void* const* addresses, const void* src, uint32_t active, size_t lane_size);
+
 /* The various JIT targets.  */
 
 // arm64
