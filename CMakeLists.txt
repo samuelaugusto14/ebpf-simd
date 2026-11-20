@@ -21,7 +21,7 @@ if(UBPF_ENABLE_TESTS)
 endif()
 
 add_subdirectory("vm")
-add_subdirectory(demos)
+add_subdirectory(demos "${CMAKE_CURRENT_SOURCE_DIR}/demos/build")
 
 if(NOT UBPF_SKIP_EXTERNAL)
   ExternalProject_Add(Conformance

@@ -7,44 +7,40 @@ O demo executa um filtro eBPF escalar no interpretador do uBPF. O `main.c` cont�
 ```text
 ubpf/CMakeLists.txt
 ├── vm/CMakeLists.txt                      biblioteca nativa ubpf
-└── demos/CMakeLists.txt                   opção UBPF_ENABLE_BASIC_FILTER
-    └── basic-filter/CMakeLists.txt        executável nativo e objeto eBPF
+└── demos/CMakeLists.txt                   descoberta de demos e compilação eBPF
+    └── basic-filter/CMakeLists.txt        alvos do filtro e do executável
 ```
 
-- O CMake da raiz configura o projeto e carrega `vm/` e `demos/`. O CMake de `vm/` define o alvo `ubpf` e expõe seus cabeçalhos públicos.
-- `demos/CMakeLists.txt` inclui `basic-filter/` quando `UBPF_ENABLE_BASIC_FILTER` está habilitada. A opção vem desabilitada por padrão.
-- `basic-filter/CMakeLists.txt` define os dois alvos do demo.
-  - `basic-filter-bpf` usa `add_custom_command` para chamar o Clang e gerar o ELF relocável `filter.o`. `--target=bpfel` seleciona eBPF little-endian, `-mcpu=v1` usa o conjunto básico de instruções e `-ffreestanding` permite usar os tipos de `<stdint.h>` sem recorrer aos cabeçalhos da libc do host. O objeto é recompilado quando `filter.c` ou `filter.h` muda.
-  - `basic-filter` compila `main.c` com o compilador C do host e vincula o executável à biblioteca `ubpf` com `target_link_libraries`. `add_dependencies` faz esse alvo também gerar `filter.o` por meio de `basic-filter-bpf`.
+- O CMake da raiz carrega `vm/` e `demos/` e fixa `demos/build/` como diretório binário das demos. O CMake de `vm/` define a biblioteca `ubpf` e expõe seus cabeçalhos públicos.
+- `demos/CMakeLists.txt` descobre as subpastas com `CMakeLists.txt` e cria uma opção ligada por padrão para cada uma. Para `basic-filter/`, a opção é `UBPF_ENABLE_BASIC_FILTER`.
+- `basic-filter/CMakeLists.txt` registra o alvo `basic-filter-bpf` com `add_bpf_program(basic-filter-bpf filter.c filter.h)`. A função compartilhada chama o Clang e gera `filter.o` no diretório binário da demo. O objeto é recompilado quando `filter.c` ou `filter.h` muda.
+- O alvo `basic-filter` compila `main.c` com o compilador C do host e vincula o executável à biblioteca `ubpf` com `target_link_libraries`. `add_dependencies` faz esse alvo também gerar `filter.o` por meio de `basic-filter-bpf`.
+
+Na compilação eBPF, `--target=bpfel` seleciona eBPF little-endian, `-mcpu=v1` usa o conjunto básico de instruções, `-ffreestanding` permite usar os tipos de `<stdint.h>` sem recorrer aos cabeçalhos da libc do host e `-O2` ativa as otimizações do Clang.
 
 ## Configurar e compilar
 
-Os comandos abaixo são para Linux little-endian com CMake, Make, compiladores nativos de C e C++ e Clang com suporte ao alvo BPF. A partir da raiz do repositório `ubpf`, configure o projeto e compile o demo completo.
+Os comandos abaixo são para Linux little-endian com CMake, Make, compiladores nativos de C e C++, Clang com suporte a BPF e os submódulos do repositório inicializados. Rode na raiz do `ubpf` para configurar e compilar a VM e todas as demos habilitadas.
 
 ```sh
-cmake -S . -B demos/basic-filter/build -G "Unix Makefiles" \
-  -DUBPF_ENABLE_BASIC_FILTER=ON \
-  -DUBPF_SKIP_EXTERNAL=ON
-
-cmake --build demos/basic-filter/build --target basic-filter
+cmake -S . -B build && cmake --build build
 ```
 
 - `-S .` indica que o `CMakeLists.txt` principal está no diretório atual, a raiz do `ubpf`.
-- `-B demos/basic-filter/build` define onde ficam o cache do CMake, os arquivos gerados pelo CMake e os artefatos compilados.
-- `-G "Unix Makefiles"` seleciona o gerador de arquivos para o Make. O CMake chama o Make ao executar `cmake --build`.
-- `-DUBPF_ENABLE_BASIC_FILTER=ON` habilita a opção que inclui `demos/basic-filter` e registra os alvos do demo.
-- `-DUBPF_SKIP_EXTERNAL=ON` desativa o projeto externo de testes `Conformance`. Isso dispensa a dependência de Boost desse projeto no build do demo.
-- `--build` usa o diretório já configurado. `--target basic-filter` seleciona o executável e aciona suas dependências, a biblioteca `ubpf` e o objeto eBPF `filter.o`.
+- `-B build` define o diretório do cache e da saída da VM. O CMake da raiz direciona a saída das demos para `demos/build/`.
+- `--build build` compila os alvos padrão, incluindo a biblioteca `ubpf` e as demos habilitadas. Para recompilar apenas o filtro, use `cmake --build build --target basic-filter-bpf`.
+- `-DUBPF_ENABLE_BASIC_FILTER=OFF` desativa o demo. Se o cache de um build anterior já tiver essa opção em `OFF`, use `-DUBPF_ENABLE_BASIC_FILTER=ON` para reativá-lo.
+- `-DUBPF_SKIP_EXTERNAL=ON` pula o projeto de testes `Conformance` e sua dependência de Boost.
+- `-G "Unix Makefiles"` seleciona o gerador que usa Make ao configurar um build novo.
 
-As opções `-D` definem variáveis no cache do CMake. Para escolher um Clang específico, acrescente `-DBASIC_FILTER_CLANG=/caminho/para/clang` ao comando de configuração. Para recompilar após editar `main.c`, `filter.c` ou `filter.h`, basta repetir o segundo comando.
+As opções `-D` definem variáveis no cache do CMake. Para indicar um diretório de busca alternativo para o Clang, use `-DUBPF_ALTERNATE_LLVM_PATH=/caminho/para/bin`. Para indicar o executável diretamente, use `-DUBPF_BPF_CLANG=/caminho/para/clang`. Use um diretório de build da raiz por cópia do repositório, pois as configurações compartilham `demos/build/`.
 
 ## Executar e ler o resultado
 
-Ainda na raiz do repositório, passe o caminho do objeto eBPF ao executável nativo. O CMake reproduz a hierarquia dos subdiretórios de origem dentro da pasta de build, por isso `filter.o` fica em `build/demos/basic-filter/` dentro do demo.
+Ainda na raiz do repositório, passe o caminho do objeto eBPF ao executável nativo. Ambos ficam em `demos/build/basic-filter/`.
 
 ```sh
-./demos/basic-filter/build/bin/basic-filter \
-  demos/basic-filter/build/demos/basic-filter/filter.o
+./demos/build/basic-filter/basic-filter demos/build/basic-filter/filter.o
 ```
 
 ```text
