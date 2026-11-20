@@ -1,4 +1,4 @@
-from .asm_parser import parse, Imm, Label, LabelRef
+from .asm_parser import parse, Imm, Label, LabelRef, MemRef, Reg, VReg
 import struct
 try:
     from StringIO import StringIO as io
@@ -80,6 +80,113 @@ JMP_MISC_OPS = {
     'exit': 9,
 }
 
+class SimdEncoding(object):
+    def __init__(self, opcode, src_type=None, dst_type=VReg, offset=0, lane=None):
+        self.opcode = opcode
+        self.src_type = src_type
+        self.dst_type = dst_type
+        self.offset = offset
+        # When present, lane is (field name, lane count).
+        self.lane = lane
+
+
+SIMD_OPS = {
+    # Arithmetic
+    'vadd.32 k': SimdEncoding(0xe4, Imm),
+    'vadd.32 x': SimdEncoding(0xec, VReg),
+    'vadd.64 k': SimdEncoding(0xe7, Imm),
+    'vadd.64 x': SimdEncoding(0xef, VReg),
+    'vsub.32 k': SimdEncoding(0xf4, Imm),
+    'vsub.32 x': SimdEncoding(0xfc, VReg),
+    'vsub.64 k': SimdEncoding(0xf7, Imm),
+    'vsub.64 x': SimdEncoding(0xff, VReg),
+    'vmul.32 k': SimdEncoding(0x82, Imm),
+    'vmul.32 x': SimdEncoding(0x8a, VReg),
+    'vmul.64 k': SimdEncoding(0x92, Imm),
+    'vmul.64 x': SimdEncoding(0x9a, VReg),
+
+    # Bitwise
+    'vand': SimdEncoding(0x0b, VReg),
+    'vand.32 k': SimdEncoding(0x03, Imm),
+    'vand.64 k': SimdEncoding(0x13, Imm),
+    'vor': SimdEncoding(0x2b, VReg),
+    'vor.32 k': SimdEncoding(0x23, Imm),
+    'vor.64 k': SimdEncoding(0x33, Imm),
+    'vxor': SimdEncoding(0x4b, VReg),
+    'vxor.32 k': SimdEncoding(0x43, Imm),
+    'vxor.64 k': SimdEncoding(0x53, Imm),
+    'vnot': SimdEncoding(0x5b),
+
+    # Shifts
+    'vlsh.32 k': SimdEncoding(0xa2, Imm),
+    'vlsh.32 x': SimdEncoding(0xaa, VReg),
+    'vlsh.64 k': SimdEncoding(0xb2, Imm),
+    'vlsh.64 x': SimdEncoding(0xba, VReg),
+    'vrsh.32 k': SimdEncoding(0xc2, Imm),
+    'vrsh.32 x': SimdEncoding(0xca, VReg),
+    'vrsh.64 k': SimdEncoding(0xd2, Imm),
+    'vrsh.64 x': SimdEncoding(0xda, VReg),
+    'varsh.32 k': SimdEncoding(0xe2, Imm),
+    'varsh.32 x': SimdEncoding(0xea, VReg),
+    'varsh.64 k': SimdEncoding(0xf2, Imm),
+    'varsh.64 x': SimdEncoding(0xfa, VReg),
+
+    # Vector moves and broadcasts
+    'vmov.32 k': SimdEncoding(0x60, Imm),
+    'vmov.32 x': SimdEncoding(0x68, Reg),
+    'vmov.64 k': SimdEncoding(0x70, Imm),
+    'vmov.64 x': SimdEncoding(0x78, Reg),
+    'vmov': SimdEncoding(0x80, VReg),
+
+    # Byte order conversions
+    'vtobe.32': SimdEncoding(0xa0),
+    'vtobe.64': SimdEncoding(0xb0),
+    'vtole.32': SimdEncoding(0xa8),
+    'vtole.64': SimdEncoding(0xb8),
+
+    # Lane access and reduction
+    'vextract.32': SimdEncoding(0xc8, VReg, dst_type=Reg, lane=('imm', 8)),
+    'vextract.64': SimdEncoding(0xd8, VReg, dst_type=Reg, lane=('imm', 4)),
+    'vinsert.32 k': SimdEncoding(0x08, Imm, lane=('offset', 8)),
+    'vinsert.32 x': SimdEncoding(0xe8, Reg, lane=('offset', 8)),
+    'vinsert.64 k': SimdEncoding(0x10, Imm, lane=('offset', 4)),
+    'vinsert.64 x': SimdEncoding(0xf8, Reg, lane=('offset', 4)),
+    'vreduce.add.32': SimdEncoding(0xe0, VReg, dst_type=Reg),
+    'vreduce.add.64': SimdEncoding(0xf0, VReg, dst_type=Reg),
+
+    # Masked moves and mask extraction
+    'vmovm.32': SimdEncoding(0x88, VReg),
+    'vmovm.64': SimdEncoding(0x98, VReg),
+    'vmovmsk.32': SimdEncoding(0xc0, dst_type=Reg),
+    'vmovmsk.64': SimdEncoding(0xd0, dst_type=Reg),
+
+    # Comparisons write V15 implicitly. GT uses offset=1 for signed and 0 for unsigned.
+    'vcmp.eq.32 k': SimdEncoding(0xe6, Imm),
+    'vcmp.eq.32 x': SimdEncoding(0xee, VReg),
+    'vcmp.eq.64 k': SimdEncoding(0xe5, Imm),
+    'vcmp.eq.64 x': SimdEncoding(0xed, VReg),
+    'vcmp.gt.s32 k': SimdEncoding(0xf6, Imm, offset=1),
+    'vcmp.gt.s32 x': SimdEncoding(0xfe, VReg, offset=1),
+    'vcmp.gt.s64 k': SimdEncoding(0xf5, Imm, offset=1),
+    'vcmp.gt.s64 x': SimdEncoding(0xfd, VReg, offset=1),
+    'vcmp.gt.u32 k': SimdEncoding(0xf6, Imm),
+    'vcmp.gt.u32 x': SimdEncoding(0xfe, VReg),
+    'vcmp.gt.u64 k': SimdEncoding(0xf5, Imm),
+    'vcmp.gt.u64 x': SimdEncoding(0xfd, VReg),
+
+    # Memory operands encode a scalar base and a signed byte offset.
+    'vld': SimdEncoding(0xa1, MemRef),
+    'vldm.32': SimdEncoding(0xa9, MemRef),
+    'vldm.64': SimdEncoding(0xb9, MemRef),
+    'vst': SimdEncoding(0x83, VReg, dst_type=MemRef),
+    'vstm.32': SimdEncoding(0x8b, VReg, dst_type=MemRef),
+    'vstm.64': SimdEncoding(0x9b, VReg, dst_type=MemRef),
+    'vgather.32': SimdEncoding(0xc1, MemRef),
+    'vgather.64': SimdEncoding(0xd1, MemRef),
+    'vscatter.32': SimdEncoding(0xa3, VReg, dst_type=MemRef),
+    'vscatter.64': SimdEncoding(0xb3, VReg, dst_type=MemRef),
+}
+
 def pack(opcode, dst, src, offset, imm):
     return Inst.pack(opcode & 0xff, (dst | (src << 4)) & 0xff, offset & 0xffff, imm & 0xffffffff)
 
@@ -89,6 +196,54 @@ def assemble_binop(op, cls, ops, dst, src, offset):
         return pack(opcode, dst.num, 0, offset, src.value)
     else:
         return pack(opcode | 0x08, dst.num, src.num, offset, 0)
+
+def simd_register_number(op, reg, reg_type, role):
+    if reg_type is VReg:
+        prefix, limit = '%v', 15
+    else:
+        prefix = '%r'
+        limit = 9 if role == 'destination' else 10
+    if not 0 <= reg.num <= limit:
+        raise ValueError('{}: {} must be in {}0..{}{}'.format(op, role, prefix, prefix, limit))
+    return reg.num
+
+def simd_memory_fields(op, reference):
+    base = simd_register_number(op, reference.reg, Reg, 'base')
+    offset = reference.offset
+    if not -(1 << 15) <= offset < (1 << 15):
+        raise ValueError('{}: memory offset must be in -32768..32767'.format(op))
+    return base, offset
+
+def assemble_simd(op, dst, src=None, lane=None):
+    encoding = SIMD_OPS[op]
+    src_num = 0
+    imm = 0
+    offset = encoding.offset
+
+    if encoding.dst_type is MemRef:
+        dst_num, offset = simd_memory_fields(op, dst)
+    else:
+        dst_num = simd_register_number(op, dst, encoding.dst_type, 'destination')
+
+    if encoding.src_type is Imm:
+        imm = src.value
+        if not -(1 << 31) <= imm < (1 << 32):
+            raise ValueError('{}: immediate does not fit in 32 bits'.format(op))
+    elif encoding.src_type is MemRef:
+        src_num, offset = simd_memory_fields(op, src)
+    elif encoding.src_type is not None:
+        src_num = simd_register_number(op, src, encoding.src_type, 'source')
+
+    if encoding.lane is not None:
+        field, count = encoding.lane
+        if not 0 <= lane.value < count:
+            raise ValueError('{}: lane must be in 0..{}'.format(op, count - 1))
+        if field == 'imm':
+            imm = lane.value
+        else:
+            offset = lane.value
+
+    return pack(encoding.opcode, dst_num, src_num, offset, imm)
 
 def assemble_one(inst):
     op = inst[0]
@@ -122,6 +277,8 @@ def assemble_one(inst):
         return assemble_binop(op, 0x07, SIGNED_BINARY_ALU_OPS, inst[1], inst[2], 1)
     elif op in SIGNED_BINARY_ALU32_OPS:
         return assemble_binop(op, 0x04, SIGNED_BINARY_ALU32_OPS, inst[1], inst[2], 1)
+    elif op in SIMD_OPS:
+        return assemble_simd(*inst)
     elif op in END_OPS:
         opcode, imm = END_OPS[op]
         return pack(opcode, inst[1].num, 0, 0, imm)
