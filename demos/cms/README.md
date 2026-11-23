@@ -33,7 +33,7 @@ A entrada do MurmurHash3 x86-32 tem 20 bytes. Ela contém cinco palavras de 32 b
 | Matriz de contadores | 20 |
 | Oito sementes | 32788 |
 
-Os dois programas misturam as cinco palavras uma vez por pacote dentro da VM. O escalar percorre as oito sementes e atualiza um contador por linha. O SIMD carrega as sementes em um vetor, replica uma palavra misturada por vez e combina essa palavra com as oito lanes do hash. Depois da mistura final, a lane `i` usa o índice linear `i × 1024 + coluna`. Assim, `VGATHER.32` lê posições distintas e `VADD.32` e `VSCATTER.32` incrementam e gravam os oito contadores. No backend AVX2 do uBPF, o scatter é implementado com escritas por lane.
+Os dois programas misturam as cinco palavras uma vez por pacote dentro da VM. O escalar percorre as oito sementes e atualiza um contador por linha. O SIMD carrega as sementes em um vetor, replica uma palavra misturada por vez e combina essa palavra com as oito lanes do hash. Depois da mistura final, a lane `i` usa o índice linear `i × 1024 + coluna`. Assim, `VGATHER.32` lê posições distintas e `VADD.32` e `VSCATTER.32` incrementam e gravam os oito contadores.
 
 ## Medição e validação
 
